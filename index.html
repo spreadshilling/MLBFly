@@ -1,0 +1,420 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MLB Monte Carlo Predictor</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        /* Modern Glassmorphism Theme */
+        body {
+            margin: 0;
+            min-height: 100vh;
+            background: linear-gradient(120deg, #0f2027, #203a43, #2c5364);
+            background-size: 400% 400%;
+            animation: gradientBG 15s ease infinite;
+            font-family: 'Segoe UI', Roboto, Helvetica, sans-serif;
+            color: #e0e6ed;
+        }
+
+        @keyframes gradientBG {
+            0% { background-position: 0% 50%; }
+            50% { background-position: 100% 50%; }
+            100% { background-position: 0% 50%; }
+        }
+
+        .glass-panel {
+            background: rgba(255, 255, 255, 0.03);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 16px;
+            box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.3);
+            padding: 1.5rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .glass-header {
+            background: rgba(0, 0, 0, 0.2);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+            padding: 2rem;
+            border-radius: 16px 16px 0 0;
+            margin-bottom: 2rem;
+        }
+
+        .glass-input {
+            background: rgba(0, 0, 0, 0.2) !important;
+            border: 1px solid rgba(255, 255, 255, 0.1) !important;
+            color: #fff !important;
+            transition: all 0.3s ease;
+        }
+        
+        .glass-input:focus {
+            background: rgba(0, 0, 0, 0.4) !important;
+            border-color: #4facfe !important;
+            box-shadow: 0 0 10px rgba(79, 172, 254, 0.3) !important;
+        }
+
+        select.glass-input option {
+            background: #203a43;
+            color: white;
+        }
+
+        .btn-glass {
+            background: rgba(79, 172, 254, 0.2);
+            border: 1px solid rgba(79, 172, 254, 0.4);
+            color: #fff;
+            backdrop-filter: blur(4px);
+            transition: all 0.3s;
+        }
+
+        .btn-glass:hover:not(:disabled) {
+            background: rgba(79, 172, 254, 0.4);
+            transform: translateY(-2px);
+            color: #fff;
+        }
+
+        .btn-glass:disabled {
+            background: rgba(255, 255, 255, 0.05);
+            color: #888;
+            border-color: transparent;
+        }
+
+        .nav-tabs { border-bottom: 1px solid rgba(255, 255, 255, 0.1); }
+        .nav-tabs .nav-link {
+            color: #aaa;
+            border: none;
+            background: transparent;
+        }
+        .nav-tabs .nav-link.active {
+            color: #4facfe;
+            background: transparent;
+            border-bottom: 2px solid #4facfe;
+        }
+
+        .stat-label { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 1px; color: #8ba3b5; }
+        .win-bar { height: 8px; border-radius: 4px; background: rgba(0,0,0,0.3); overflow: hidden; }
+        .win-bar-fill { height: 100%; background: linear-gradient(90deg, #4facfe, #00f2fe); transition: width 0.8s; }
+        .top-pick-glow { box-shadow: 0 0 20px rgba(255, 215, 0, 0.2); border-color: rgba(255, 215, 0, 0.4); }
+        
+        .status-badge {
+            font-size: 0.7rem;
+            padding: 4px 8px;
+            border-radius: 12px;
+            background: rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/babel-standalone@6/babel.min.js"></script>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+
+        // --- Core Engine & Data ---
+        const PARK_FACTORS = {
+            COL: 1.28, CIN: 1.12, TEX: 1.09, HOU: 1.08, PHI: 1.07, NYY: 1.06, BOS: 1.05, MIL: 1.04, ATL: 1.03, CHC: 1.03,
+            LAD: 1.01, NYM: 1.00, TOR: 1.00, MIN: 0.99, STL: 0.98, DET: 0.97, CWS: 0.97, ARI: 0.97, LAA: 0.96, SDP: 0.96,
+            CLE: 0.95, KCR: 0.95, PIT: 0.95, BAL: 0.94, SEA: 0.94, SFG: 0.93, TBR: 0.93, WSN: 0.92, MIA: 0.90, OAK: 0.89,
+        };
+
+        const TEAM_NAMES = {
+            COL: "Rockies", CIN: "Reds", TEX: "Rangers", HOU: "Astros", PHI: "Phillies", NYY: "Yankees", BOS: "Red Sox", 
+            MIL: "Brewers", ATL: "Braves", CHC: "Cubs", LAD: "Dodgers", NYM: "Mets", TOR: "Blue Jays", MIN: "Twins", 
+            STL: "Cardinals", DET: "Tigers", CWS: "White Sox", ARI: "D-backs", LAA: "Angels", SDP: "Padres", 
+            CLE: "Guardians", KCR: "Royals", PIT: "Pirates", BAL: "Orioles", SEA: "Mariners", SFG: "Giants", 
+            TBR: "Rays", WSN: "Nationals", MIA: "Marlins", OAK: "Athletics",
+        };
+
+        function randNormal(mean = 0, sd = 1) {
+            let u = 0, v = 0;
+            while (u === 0) u = Math.random();
+            while (v === 0) v = Math.random();
+            return mean + sd * Math.sqrt(-2.0 * Math.log(u)) * Math.cos(2.0 * Math.PI * v);
+        }
+
+        function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+
+        function runSimulation({ homeTeam, awayTeam, homeOffense, awayOffense, homeERA, awayERA, homeBullpenFatigue, awayBullpenFatigue, parkFactor, temperature, windSpeed, windHelping, N = 10000 }) {
+            let homeWins = 0, totalHomeRuns = 0, totalAwayRuns = 0;
+            const tempFactor = 1 + (temperature - 70) * 0.0015;
+            const windFactor = windHelping ? 1 + windSpeed * 0.003 : 1 - windSpeed * 0.002;
+            const envFactor = parkFactor * tempFactor * windFactor;
+
+            for (let i = 0; i < N; i++) {
+                const homeStarterAllowed = clamp(randNormal((awayERA / 9) * 6 * envFactor, 1.4), 0, 10);
+                const awayStarterAllowed = clamp(randNormal((homeERA / 9) * 6 * envFactor, 1.4), 0, 10);
+                const homeBullpenAllowed = clamp(randNormal(1.5 * (1 + homeBullpenFatigue * 0.6) * envFactor, 0.9), 0, 6);
+                const awayBullpenAllowed = clamp(randNormal(1.5 * (1 + awayBullpenFatigue * 0.6) * envFactor, 0.9), 0, 6);
+                
+                const homeRuns = clamp(randNormal(homeOffense * envFactor * (3.8 / Math.max(awayERA, 1)), 1.8), 0, 20);
+                const awayRuns = clamp(randNormal(awayOffense * envFactor * (3.8 / Math.max(homeERA, 1)), 1.8), 0, 20);
+
+                const h = Math.round((homeRuns * 0.55 + (awayStarterAllowed + awayBullpenAllowed) * 0.45));
+                const a = Math.round((awayRuns * 0.55 + (homeStarterAllowed + homeBullpenAllowed) * 0.45));
+
+                totalHomeRuns += h; totalAwayRuns += a;
+                if (h > a) homeWins++;
+            }
+
+            const homeWinPct = homeWins / N;
+            return {
+                homeWinPct, awayWinPct: 1 - homeWinPct,
+                avgHomeRuns: parseFloat((totalHomeRuns / N).toFixed(1)),
+                avgAwayRuns: parseFloat((totalAwayRuns / N).toFixed(1)),
+                expectedTotal: parseFloat(((totalHomeRuns + totalAwayRuns) / N).toFixed(1)),
+                confidence: Math.min(99, Math.round(50 + Math.abs(homeWinPct - 0.5) * 120))
+            };
+        }
+
+        function calcMSI(modelWinPct, marketOdds) {
+            const impliedProb = marketOdds < 0 ? Math.abs(marketOdds) / (Math.abs(marketOdds) + 100) : 100 / (marketOdds + 100);
+            return { edge: ((modelWinPct - impliedProb) * 100).toFixed(1), impliedProb };
+        }
+
+        function calcWRG(seasonRPG, last10RPG) { return (seasonRPG * 0.4 + last10RPG * 0.6).toFixed(2); }
+        function calcBUFI(inningsLast3Days, relieversUsedLast3) { return clamp((inningsLast3Days / 9) * 0.6 + (relieversUsedLast3 / 8) * 0.4, 0, 1); }
+
+        const defaultMatchup = {
+            homeTeam: "LAD", awayTeam: "SDP", homeSeasonRPG: 5.1, homeLast10RPG: 5.4, awaySeasonRPG: 4.6, awayLast10RPG: 4.9,
+            homeERA: 3.20, awayERA: 3.85, homeInnings3D: 6, homeRelievers3D: 3, awayInnings3D: 9, awayRelievers3D: 5,
+            temperature: 72, windSpeed: 8, windHelping: true, homeMarketOdds: -145, awayMarketOdds: 125,
+        };
+
+        // --- UI Components ---
+        function App() {
+            const [matchups, setMatchups] = useState([]);
+            const [results, setResults] = useState([]);
+            const [running, setRunning] = useState(false);
+            const [simCount, setSimCount] = useState(0);
+            const [activeTab, setActiveTab] = useState("input");
+            
+            // New states for the data pipeline
+            const [isLoadingData, setIsLoadingData] = useState(true);
+            const [dataSource, setDataSource] = useState("Loading...");
+
+            const intervalRef = useRef(null);
+
+            // Fetch daily data on component mount
+            useEffect(() => {
+                fetch('./daily_matchups.json')
+                    .then(response => {
+                        if (!response.ok) throw new Error("File not found");
+                        return response.json();
+                    })
+                    .then(data => {
+                        if (data && data.length > 0) {
+                            setMatchups(data);
+                            setDataSource("Live API Data Loaded");
+                        } else {
+                            throw new Error("Empty data array");
+                        }
+                    })
+                    .catch(error => {
+                        console.warn("Could not load daily_matchups.json. Falling back to default data.", error);
+                        setMatchups([defaultMatchup]);
+                        setDataSource("Local Default (API Offline)");
+                    })
+                    .finally(() => {
+                        setIsLoadingData(false);
+                    });
+            }, []);
+
+            const updateMatchup = (i, field, value) => setMatchups(prev => prev.map((m, idx) => idx === i ? { ...m, [field]: value } : m));
+            const addMatchup = () => setMatchups(prev => [...prev, { ...defaultMatchup, homeTeam: "NYY", awayTeam: "BOS" }]);
+            const removeMatchup = (i) => setMatchups(prev => prev.filter((_, idx) => idx !== i));
+
+            const runAll = () => {
+                setRunning(true); setSimCount(0); setResults([]);
+                let count = 0;
+                intervalRef.current = setInterval(() => {
+                    count += 1000;
+                    setSimCount(count);
+                    if (count >= 10000) {
+                        clearInterval(intervalRef.current);
+                        const computed = matchups.map(m => {
+                            const sim = runSimulation({
+                                ...m, 
+                                homeOffense: parseFloat(calcWRG(m.homeSeasonRPG, m.homeLast10RPG)),
+                                awayOffense: parseFloat(calcWRG(m.awaySeasonRPG, m.awayLast10RPG)),
+                                homeBullpenFatigue: calcBUFI(m.homeInnings3D, m.homeRelievers3D),
+                                awayBullpenFatigue: calcBUFI(m.awayInnings3D, m.awayRelievers3D),
+                                parkFactor: PARK_FACTORS[m.homeTeam] || 1.0, N: 10000
+                            });
+                            return {
+                                matchup: m, sim,
+                                topPick: sim.homeWinPct >= sim.awayWinPct 
+                                    ? { team: m.homeTeam, winPct: sim.homeWinPct, msi: calcMSI(sim.homeWinPct, m.homeMarketOdds) }
+                                    : { team: m.awayTeam, winPct: sim.awayWinPct, msi: calcMSI(sim.awayWinPct, m.awayMarketOdds) }
+                            };
+                        });
+                        setResults(computed); setRunning(false); setActiveTab("results");
+                    }
+                }, 40);
+            };
+
+            if (isLoadingData) {
+                return (
+                    <div className="container py-5 text-center">
+                        <div className="spinner-border text-info mb-3" role="status"></div>
+                        <h4 className="fw-light">Fetching Today's Matchups...</h4>
+                    </div>
+                );
+            }
+
+            return (
+                <div className="container py-4">
+                    <div className="glass-header text-center position-relative">
+                        <h1 className="fw-light mb-0">MLB Monte Carlo Engine</h1>
+                        <p className="stat-label mt-2 mb-2">10,000 Sims · Glassmorphism Edition</p>
+                        <span className={`status-badge ${dataSource.includes('Live') ? 'text-success border-success' : 'text-warning border-warning'}`}>
+                            {dataSource.includes('Live') ? '●' : '○'} {dataSource}
+                        </span>
+                    </div>
+
+                    <ul className="nav nav-tabs mb-4">
+                        <li className="nav-item">
+                            <button className={`nav-link ${activeTab === 'input' ? 'active' : ''}`} onClick={() => setActiveTab('input')}>
+                                Configurations ({matchups.length})
+                            </button>
+                        </li>
+                        <li className="nav-item">
+                            <button className={`nav-link ${activeTab === 'results' ? 'active' : ''}`} onClick={() => setActiveTab('results')}>
+                                Results {results.length > 0 && `(${results.length})`}
+                            </button>
+                        </li>
+                    </ul>
+
+                    {activeTab === "input" && (
+                        <div>
+                            {matchups.map((m, i) => (
+                                <div key={i} className="glass-panel">
+                                    <div className="d-flex justify-content-between mb-3">
+                                        <h5 className="mb-0 fw-light text-info">Matchup {i + 1}</h5>
+                                        {matchups.length > 1 && <button className="btn btn-sm btn-outline-danger" onClick={() => removeMatchup(i)}>✕</button>}
+                                    </div>
+                                    <div className="row g-3">
+                                        <div className="col-md-3">
+                                            <div className="stat-label mb-2">Teams</div>
+                                            <select className="form-select glass-input mb-2" value={m.awayTeam} onChange={e => updateMatchup(i, 'awayTeam', e.target.value)}>
+                                                {Object.keys(PARK_FACTORS).map(t => <option key={t} value={t}>{t} (Away)</option>)}
+                                            </select>
+                                            <select className="form-select glass-input" value={m.homeTeam} onChange={e => updateMatchup(i, 'homeTeam', e.target.value)}>
+                                                {Object.keys(PARK_FACTORS).map(t => <option key={t} value={t}>{t} (Home)</option>)}
+                                            </select>
+                                        </div>
+                                        <div className="col-md-3">
+                                            <div className="stat-label mb-2">Offense (R/G)</div>
+                                            <div className="input-group input-group-sm mb-2">
+                                                <span className="input-group-text glass-input" style={{width: '90px'}}>Away R/G</span>
+                                                <input type="number" step="0.1" className="form-control glass-input" value={m.awaySeasonRPG} onChange={e=>updateMatchup(i, 'awaySeasonRPG', parseFloat(e.target.value))} title="Season Average"/>
+                                                <input type="number" step="0.1" className="form-control glass-input" value={m.awayLast10RPG} onChange={e=>updateMatchup(i, 'awayLast10RPG', parseFloat(e.target.value))} title="Last 10 Games"/>
+                                            </div>
+                                            <div className="input-group input-group-sm">
+                                                <span className="input-group-text glass-input" style={{width: '90px'}}>Home R/G</span>
+                                                <input type="number" step="0.1" className="form-control glass-input" value={m.homeSeasonRPG} onChange={e=>updateMatchup(i, 'homeSeasonRPG', parseFloat(e.target.value))} title="Season Average"/>
+                                                <input type="number" step="0.1" className="form-control glass-input" value={m.homeLast10RPG} onChange={e=>updateMatchup(i, 'homeLast10RPG', parseFloat(e.target.value))} title="Last 10 Games"/>
+                                            </div>
+                                        </div>
+                                        <div className="col-md-3">
+                                            <div className="stat-label mb-2">Starting Pitching (ERA)</div>
+                                            <div className="input-group input-group-sm mb-2">
+                                                <span className="input-group-text glass-input" style={{width: '90px'}}>Away SP</span>
+                                                <input type="number" step="0.1" className="form-control glass-input" value={m.awayERA} onChange={e=>updateMatchup(i, 'awayERA', parseFloat(e.target.value))}/>
+                                            </div>
+                                            <div className="input-group input-group-sm">
+                                                <span className="input-group-text glass-input" style={{width: '90px'}}>Home SP</span>
+                                                <input type="number" step="0.1" className="form-control glass-input" value={m.homeERA} onChange={e=>updateMatchup(i, 'homeERA', parseFloat(e.target.value))}/>
+                                            </div>
+                                        </div>
+                                        <div className="col-md-3">
+                                            <div className="stat-label mb-2">Market Odds (ML)</div>
+                                            <div className="input-group input-group-sm mb-2">
+                                                <span className="input-group-text glass-input" style={{width: '90px'}}>Away ML</span>
+                                                <input type="number" step="5" className="form-control glass-input" value={m.awayMarketOdds} onChange={e=>updateMatchup(i, 'awayMarketOdds', parseFloat(e.target.value))}/>
+                                            </div>
+                                            <div className="input-group input-group-sm">
+                                                <span className="input-group-text glass-input" style={{width: '90px'}}>Home ML</span>
+                                                <input type="number" step="5" className="form-control glass-input" value={m.homeMarketOdds} onChange={e=>updateMatchup(i, 'homeMarketOdds', parseFloat(e.target.value))}/>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            ))}
+                            <div className="d-flex gap-3">
+                                <button className="btn btn-glass px-4" onClick={addMatchup}>+ Add Matchup</button>
+                                <button className="btn btn-primary px-5 shadow" disabled={running} onClick={runAll}>
+                                    {running ? `Running... ${simCount}/10,000` : "▶ Run Simulations"}
+                                </button>
+                            </div>
+                        </div>
+                    )}
+
+                    {activeTab === "results" && (
+                        <div className="row">
+                            {results.map((r, i) => {
+                                const isTopPick = r.topPick.winPct >= 0.65; 
+                                return (
+                                    <div key={i} className="col-md-6 mb-4">
+                                        <div className={`glass-panel h-100 ${isTopPick ? 'top-pick-glow' : ''}`}>
+                                            <div className="d-flex justify-content-between align-items-center mb-3 border-bottom border-secondary pb-2">
+                                                <h5 className="mb-0">{TEAM_NAMES[r.matchup.awayTeam]} @ {TEAM_NAMES[r.matchup.homeTeam]}</h5>
+                                                {isTopPick && <span className="badge bg-warning text-dark">★ Top Pick</span>}
+                                            </div>
+                                            
+                                            <div className="row text-center mb-4">
+                                                <div className="col">
+                                                    <div className="fs-1 fw-light text-info">{r.sim.avgAwayRuns}</div>
+                                                    <div className="stat-label">{r.matchup.awayTeam}</div>
+                                                </div>
+                                                <div className="col d-flex align-items-center justify-content-center">
+                                                    <span className="text-secondary">VS</span>
+                                                </div>
+                                                <div className="col">
+                                                    <div className="fs-1 fw-light text-info">{r.sim.avgHomeRuns}</div>
+                                                    <div className="stat-label">{r.matchup.homeTeam}</div>
+                                                </div>
+                                            </div>
+
+                                            <div className="mb-3">
+                                                <div className="d-flex justify-content-between stat-label mb-1">
+                                                    <span>{r.matchup.awayTeam}: {(r.sim.awayWinPct * 100).toFixed(1)}%</span>
+                                                    <span>{r.matchup.homeTeam}: {(r.sim.homeWinPct * 100).toFixed(1)}%</span>
+                                                </div>
+                                                <div className="win-bar">
+                                                    <div className="win-bar-fill" style={{ width: `${r.sim.awayWinPct * 100}%` }}></div>
+                                                </div>
+                                            </div>
+
+                                            <div className="d-flex justify-content-between pt-3 border-top border-secondary">
+                                                <div>
+                                                    <span className="stat-label d-block">Exp Total</span>
+                                                    <span className="fs-5">{r.sim.expectedTotal}</span>
+                                                </div>
+                                                <div className="text-end">
+                                                    <span className="stat-label d-block">Best Edge</span>
+                                                    <span className={`fs-5 ${r.topPick.msi.edge > 2 ? 'text-success' : ''}`}>
+                                                        +{r.topPick.msi.edge}% ({r.topPick.team})
+                                                    </span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                )
+                            })}
+                        </div>
+                    )}
+                </div>
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
